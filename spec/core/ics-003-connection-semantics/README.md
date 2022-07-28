@@ -174,10 +174,10 @@ function verifyPacketData(
   proof: CommitmentProof,
   portIdentifier: Identifier,
   channelIdentifier: Identifier,
-  sequence: Height,
+  sequence: uint64,
   data: bytes) {
     client = queryClient(connection.clientIdentifier)
-    return client.verifyPacketData(connection, height, connection.delayPeriodTime, connection.delayPeriodBlocks, connection.counterpartyPrefix, proof, portIdentifier, channelIdentifier, data)
+    return client.verifyPacketData(connection, height, connection.delayPeriodTime, connection.delayPeriodBlocks, connection.counterpartyPrefix, proof, portIdentifier, channelIdentifier, sequence, data)
 }
 
 function verifyPacketAcknowledgement(
@@ -189,7 +189,7 @@ function verifyPacketAcknowledgement(
   sequence: uint64,
   acknowledgement: bytes) {
     client = queryClient(connection.clientIdentifier)
-    return client.verifyPacketAcknowledgement(connection, height, connection.delayPeriodTime, connection.delayPeriodBlocks, connection.counterpartyPrefix, proof, portIdentifier, channelIdentifier, acknowledgement)
+    return client.verifyPacketAcknowledgement(connection, height, connection.delayPeriodTime, connection.delayPeriodBlocks, connection.counterpartyPrefix, proof, portIdentifier, channelIdentifier, sequence, acknowledgement)
 }
 
 function verifyPacketReceiptAbsence(
@@ -200,7 +200,7 @@ function verifyPacketReceiptAbsence(
   channelIdentifier: Identifier,
   sequence: uint64) {
     client = queryClient(connection.clientIdentifier)
-    return client.verifyPacketReceiptAbsence(connection, height, connection.delayPeriodTime, connection.delayPeriodBlocks, connection.counterpartyPrefix, proof, portIdentifier, channelIdentifier)
+    return client.verifyPacketReceiptAbsence(connection, height, connection.delayPeriodTime, connection.delayPeriodBlocks, connection.counterpartyPrefix, proof, portIdentifier, channelIdentifier, sequence)
 }
 
 // OPTIONAL: verifyPacketReceipt is only required to support new channel types beyond ORDERED and UNORDERED.
@@ -222,9 +222,10 @@ function verifyNextSequenceRecv(
   proof: CommitmentProof,
   portIdentifier: Identifier,
   channelIdentifier: Identifier,
+  sequence: uint64,
   nextSequenceRecv: uint64) {
     client = queryClient(connection.clientIdentifier)
-    return client.verifyNextSequenceRecv(connection, height, connection.delayPeriodTime, connection.delayPeriodBlocks, connection.counterpartyPrefix, proof, portIdentifier, channelIdentifier, nextSequenceRecv)
+    return client.verifyNextSequenceRecv(connection, height, connection.delayPeriodTime, connection.delayPeriodBlocks, connection.counterpartyPrefix, proof, portIdentifier, channelIdentifier, sequence, nextSequenceRecv)
 }
 
 function getTimestampAtHeight(
@@ -337,7 +338,6 @@ function connOpenInit(
 
 ```typescript
 function connOpenTry(
-  previousIdentifier: Identifier,
   counterpartyConnectionIdentifier: Identifier,
   counterpartyPrefix: CommitmentPrefix,
   counterpartyClientIdentifier: Identifier,
@@ -349,33 +349,23 @@ function connOpenTry(
   proofConsensus: CommitmentProof,
   proofHeight: Height,
   consensusHeight: Height) {
-    if (previousIdentifier !== "") {
-      previous = provableStore.get(connectionPath(identifier))
-      abortTransactionUnless(
-        (previous !== null) &&
-        (previous.state === INIT &&
-         previous.counterpartyConnectionIdentifier === "" &&
-         previous.counterpartyPrefix === counterpartyPrefix &&
-         previous.clientIdentifier === clientIdentifier &&
-         previous.counterpartyClientIdentifier === counterpartyClientIdentifier &&
-         previous.delayPeriodTime === delayPeriodTime
-         previous.delayPeriodBlocks === delayPeriodBlocks))
-      identifier = previousIdentifier
-    } else {
-      // generate a new identifier if the passed identifier was the sentinel empty-string
-      identifier = generateIdentifier()
-    }
+    // generate a new identifier
+    identifier = generateIdentifier()
+
     abortTransactionUnless(consensusHeight < getCurrentHeight())
     expectedConsensusState = getConsensusState(consensusHeight)
     expected = ConnectionEnd{INIT, "", getCommitmentPrefix(), counterpartyClientIdentifier,
                              clientIdentifier, counterpartyVersions, delayPeriodTime, delayPeriodBlocks}
-    versionsIntersection = intersection(counterpartyVersions, previous !== null ? previous.version : getCompatibleVersions())
+
+    versionsIntersection = intersection(counterpartyVersions, getCompatibleVersions())
     version = pickVersion(versionsIntersection) // throws if there is no intersection
+
     connection = ConnectionEnd{TRYOPEN, counterpartyConnectionIdentifier, counterpartyPrefix,
                                clientIdentifier, counterpartyClientIdentifier, version, delayPeriodTime, delayPeriodBlocks}
     abortTransactionUnless(connection.verifyConnectionState(proofHeight, proofInit, counterpartyConnectionIdentifier, expected))
     abortTransactionUnless(connection.verifyClientConsensusState(
       proofHeight, proofConsensus, counterpartyClientIdentifier, consensusHeight, expectedConsensusState))
+
     provableStore.set(connectionPath(identifier), connection)
     addConnectionToClient(clientIdentifier, identifier)
 }
@@ -394,9 +384,7 @@ function connOpenAck(
   consensusHeight: Height) {
     abortTransactionUnless(consensusHeight < getCurrentHeight())
     connection = provableStore.get(connectionPath(identifier))
-    abortTransactionUnless(
-        (connection.state === INIT && connection.version.indexOf(version) !== -1)
-        || (connection.state === TRYOPEN && connection.version === version))
+    abortTransactionUnless((connection.state === INIT && connection.version.indexOf(version) !== -1)
     expectedConsensusState = getConsensusState(consensusHeight)
     expected = ConnectionEnd{TRYOPEN, identifier, getCommitmentPrefix(),
                              connection.counterpartyClientIdentifier, connection.clientIdentifier,
